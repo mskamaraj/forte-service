@@ -9,9 +9,12 @@ from datetime import datetime, timezone
 import bcrypt
 from fastapi import HTTPException, status
 
+from app.core.security import create_access_token
 from app.models.user import (
+    LoginRequest,
     RegisterRequest,
     RegisterResponse,
+    TokenResponse,
     UserListResponse,
     UserRecord,
     UserResponse,
@@ -82,6 +85,35 @@ class AuthService:
                 detail="User not found",
             )
         return _to_user_response(record)
+
+    # ── Authentication ──────────────────────────────────────────────────────
+
+    def login(self, payload: LoginRequest) -> TokenResponse:
+        """Verify credentials and return a signed JWT access token."""
+        email = payload.email.lower().strip()
+        record = self._repo.get_by_email(email)
+
+        # Use the same error for "no such user" and "wrong password"
+        # so we don't reveal which emails are registered.
+        invalid = HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+        if record is None or not self.verify_password(payload.password, record.password_hash):
+            raise invalid
+
+        if not record.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is disabled",
+            )
+
+        token, expires_in = create_access_token(record.user_id, record.email)
+        return TokenResponse(access_token=token, expires_in=expires_in)
+
+    # ── Listing ─────────────────────────────────────────────────────────────
 
     def list_users(self, limit: int = 50, cursor: str | None = None) -> UserListResponse:
         """

@@ -6,6 +6,8 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as apigwv2integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
 import { DatabaseStack } from './database-stack';
 
@@ -33,6 +35,28 @@ export class AppStack extends cdk.Stack {
     const { environment, databaseStack } = props;
     const isProd = environment === 'prod';
 
+    // ── JWT signing secret ─────────────────────────────────────────────────
+    // Secrets Manager generates a random value automatically (no hardcoding).
+    // We store the generated value in an SSM SecureString so the app reads it
+    // from SSM Parameter Store, per the chosen design.
+    const jwtSecret = new secretsmanager.Secret(this, 'JwtSigningSecret', {
+      secretName: `forte-jwt-secret-${environment}`,
+      description: `JWT signing secret for Forte — ${environment}`,
+      generateSecretString: {
+        passwordLength: 48,
+        excludePunctuation: true,
+      },
+      removalPolicy: isProd ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+    });
+
+    const jwtSecretParamName = `/forte/${environment}/jwt-secret`;
+    const jwtSecretParam = new ssm.StringParameter(this, 'JwtSecretParam', {
+      parameterName: jwtSecretParamName,
+      // Reference the generated Secrets Manager value — never a literal.
+      stringValue: jwtSecret.secretValue.unsafeUnwrap(),
+      tier: ssm.ParameterTier.STANDARD,
+    });
+
     // ── CloudWatch Log Group (explicit, so we control retention) ──────────
     const logGroup = new logs.LogGroup(this, 'ForteServiceLogGroup', {
       logGroupName: `/aws/lambda/forte-service-${environment}`,
@@ -59,8 +83,8 @@ export class AppStack extends cdk.Stack {
           image: lambda.Runtime.PYTHON_3_12.bundlingImage,
           local: {
             tryBundle(outputDir: string): boolean {
-              const install = [
-                'pip', 'install',
+              const pipArgs = [
+                'install',
                 '-r', path.join(serviceDir, 'requirements.txt'),
                 '--target', outputDir,
                 '--platform', 'manylinux2014_x86_64',
@@ -69,7 +93,11 @@ export class AppStack extends cdk.Stack {
                 '--only-binary=:all:',
                 '--upgrade',
               ];
-              const result = spawnSync(install[0], install.slice(1), { stdio: 'inherit' });
+              // Prefer `pip3`, fall back to `pip` (CI runners may use either).
+              let result = spawnSync('pip3', pipArgs, { stdio: 'inherit' });
+              if (result.status !== 0) {
+                result = spawnSync('pip', pipArgs, { stdio: 'inherit' });
+              }
               if (result.status !== 0) return false;
 
               // Copy the application source into the bundle
@@ -87,6 +115,7 @@ export class AppStack extends cdk.Stack {
       environment: {
         ENVIRONMENT: environment,
         DYNAMODB_USERS_TABLE: databaseStack.usersTable.table.tableName,
+        JWT_SECRET_PARAM_NAME: jwtSecretParamName,
       },
 
       timeout: cdk.Duration.seconds(30),
@@ -96,6 +125,9 @@ export class AppStack extends cdk.Stack {
 
     // ── IAM — grant the function read/write on the users table ────────────
     databaseStack.usersTable.table.grantReadWriteData(fn);
+
+    // ── IAM — grant the function read access to the JWT secret parameter ──
+    jwtSecretParam.grantRead(fn);
 
     // ── API Gateway HTTP API ───────────────────────────────────────────────
     const api = new apigwv2.HttpApi(this, 'ForteApi', {
