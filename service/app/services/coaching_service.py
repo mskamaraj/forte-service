@@ -51,6 +51,7 @@ from app.repositories.completion_repository import CompletionRepository
 from app.repositories.content_repository import ContentRepository
 from app.repositories.enrollment_repository import EnrollmentRepository
 from app.repositories.program_repository import ProgramRepository
+from app.models.user import Role, UserResponse
 
 
 class CoachingService:
@@ -579,7 +580,169 @@ class CoachingService:
         saved = self._completion.put(record)
         return _to_completion_response(saved)
 
+    # ── Content reads (owner coach or enrolled user) ─────────────────────────
+
+    def list_modules(self, requester: UserResponse, program_id: str) -> list[ModuleResponse]:
+        """Return a program's modules, ordered by (position, created_at).
+
+        Access is granted to the owning coach or to a user enrolled in the
+        program; otherwise 403. A missing program is 404 (checked before the
+        access decision).
+        """
+        self._require_program_read_access(requester, program_id)
+        modules = self._nodes_of_type(program_id, NodeType.module)
+        return [_to_module_response(m) for m in modules]
+
+    def get_module(
+        self, requester: UserResponse, program_id: str, module_id: str
+    ) -> ModuleResponse:
+        """Return a single module by id. 404 when it does not exist."""
+        self._require_program_read_access(requester, program_id)
+        record = self._require_node(program_id, NodeType.module, module_id)
+        return _to_module_response(record)
+
+    def list_chapters(
+        self, requester: UserResponse, program_id: str, module_id: str
+    ) -> list[ChapterResponse]:
+        """Return a module's chapters, ordered by (position, created_at).
+
+        Verifies the module exists under the program (404) before listing.
+        """
+        self._require_program_read_access(requester, program_id)
+        self._require_node(program_id, NodeType.module, module_id)
+        chapters = [
+            c
+            for c in self._nodes_of_type(program_id, NodeType.chapter)
+            if c.parent_id == module_id
+        ]
+        return [_to_chapter_response(c) for c in chapters]
+
+    def get_chapter(
+        self, requester: UserResponse, program_id: str, module_id: str, chapter_id: str
+    ) -> ChapterResponse:
+        """Return a single chapter by id, verifying it belongs to the module.
+
+        404 when the module or chapter does not exist, or when the chapter is
+        not a child of the stated module.
+        """
+        self._require_program_read_access(requester, program_id)
+        self._require_node(program_id, NodeType.module, module_id)
+        record = self._require_child_node(
+            program_id, NodeType.chapter, chapter_id, module_id
+        )
+        return _to_chapter_response(record)
+
+    def list_exercises(
+        self, requester: UserResponse, program_id: str, module_id: str, chapter_id: str
+    ) -> list[ExerciseResponse]:
+        """Return a chapter's exercises, ordered by (position, created_at).
+
+        Verifies the module and chapter exist, and that the chapter belongs to
+        the module (404 otherwise), before listing.
+        """
+        self._require_program_read_access(requester, program_id)
+        self._require_node(program_id, NodeType.module, module_id)
+        self._require_child_node(program_id, NodeType.chapter, chapter_id, module_id)
+        exercises = [
+            e
+            for e in self._nodes_of_type(program_id, NodeType.exercise)
+            if e.parent_id == chapter_id
+        ]
+        return [_to_exercise_response(e) for e in exercises]
+
+    def get_exercise(
+        self,
+        requester: UserResponse,
+        program_id: str,
+        module_id: str,
+        chapter_id: str,
+        exercise_id: str,
+    ) -> ExerciseResponse:
+        """Return a single exercise by id, verifying its full parent chain.
+
+        404 when any node in the chain does not exist, when the chapter is not a
+        child of the module, or when the exercise is not a child of the chapter.
+        """
+        self._require_program_read_access(requester, program_id)
+        self._require_node(program_id, NodeType.module, module_id)
+        self._require_child_node(program_id, NodeType.chapter, chapter_id, module_id)
+        record = self._require_child_node(
+            program_id, NodeType.exercise, exercise_id, chapter_id
+        )
+        return _to_exercise_response(record)
+
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _require_program_read_access(
+        self, requester: UserResponse, program_id: str
+    ) -> ProgramRecord:
+        """Authorize a content read: owning coach or enrolled user, else 403.
+
+        A missing program is reported 404 before the access decision, matching
+        the ``404 missing → 403 unauthorized`` precedence used elsewhere. Access
+        is granted when the requester is the Owning_Coach of the program, or
+        when the requester has an enrollment in it (any lifecycle state).
+        """
+        program = self._programs.get_by_id(program_id)
+        if program is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Program not found",
+            )
+
+        # Owning coach always has access.
+        if (
+            requester.role == Role.coach
+            and program.owner_coach_id == requester.user_id
+        ):
+            return program
+
+        # Otherwise the requester must be enrolled in the program.
+        enrollment = self._enrollments.get(requester.user_id, program_id)
+        if enrollment is not None:
+            return program
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this program's content",
+        )
+
+    def _nodes_of_type(
+        self, program_id: str, node_type: NodeType
+    ) -> list[ContentNodeRecord]:
+        """Return a program's nodes of one type, ordered by (position, created_at).
+
+        Reuses the single ``list_for_program`` query and filters/sorts in
+        memory, matching how ``_build_tree_with_completion`` orders siblings.
+        """
+        nodes = [
+            n
+            for n in self._content.list_for_program(program_id)
+            if n.node_type == node_type
+        ]
+        nodes.sort(key=lambda n: (n.position, n.created_at))
+        return nodes
+
+    def _require_child_node(
+        self,
+        program_id: str,
+        node_type: NodeType,
+        node_id: str,
+        expected_parent_id: str,
+    ) -> ContentNodeRecord:
+        """Assert a node exists AND is a child of ``expected_parent_id``, else 404.
+
+        Extends ``_require_node`` with a parent-chain check so a node cannot be
+        fetched through the wrong ancestor path (e.g. a chapter under a module
+        that is not its parent).
+        """
+        record = self._require_node(program_id, node_type, node_id)
+        if record.parent_id != expected_parent_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"{node_type.value.capitalize()} not found",
+            )
+        return record
 
     def _require_owned_program(self, coach_id: str, program_id: str) -> ProgramRecord:
         """Assert a Program exists (404) before asserting ownership (403).

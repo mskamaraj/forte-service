@@ -10,7 +10,7 @@ so a missing/invalid token yields 401 before the role check).
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import require_coach, require_user
+from app.api.deps import require_coach, require_coach_or_user, require_user
 from app.models.content import (
     ChapterCreateRequest,
     ChapterResponse,
@@ -264,3 +264,121 @@ async def update_exercise(
     """Update an exercise within an owned program's chapter. Requires the ``coach`` role."""
     service = CoachingService()
     return service.update_exercise(current_user.user_id, pid, mid, cid, eid, payload)
+
+
+# ── Content reads (owner coach or enrolled user) ──────────────────────────────
+# GET endpoints for the content hierarchy. Open to the owning coach or any user
+# enrolled in the program; per-resource authorization is applied in the service
+# (a missing program/node is 404, an unauthorized requester is 403).
+
+
+@router.get(
+    "/{pid}/modules",
+    response_model=list[ModuleResponse],
+    summary="List a program's modules",
+)
+async def list_modules(
+    pid: str,
+    current_user: UserResponse = Depends(require_coach_or_user),
+):
+    """List every module in a program, ordered by position then creation time.
+
+    Accessible to the owning coach or an enrolled user. Returns 404 when the
+    program does not exist and 403 when the requester has no access.
+    """
+    service = CoachingService()
+    return service.list_modules(current_user, pid)
+
+
+@router.get(
+    "/{pid}/modules/{mid}",
+    response_model=ModuleResponse,
+    summary="Get one module by id",
+)
+async def get_module(
+    pid: str,
+    mid: str,
+    current_user: UserResponse = Depends(require_coach_or_user),
+):
+    """Return a single module. Returns 404 when the program or module is absent."""
+    service = CoachingService()
+    return service.get_module(current_user, pid, mid)
+
+
+@router.get(
+    "/{pid}/modules/{mid}/chapters",
+    response_model=list[ChapterResponse],
+    summary="List a module's chapters",
+)
+async def list_chapters(
+    pid: str,
+    mid: str,
+    current_user: UserResponse = Depends(require_coach_or_user),
+):
+    """List every chapter in a module, ordered by position then creation time.
+
+    Returns 404 when the program or module is absent and 403 when the requester
+    has no access.
+    """
+    service = CoachingService()
+    return service.list_chapters(current_user, pid, mid)
+
+
+@router.get(
+    "/{pid}/modules/{mid}/chapters/{cid}",
+    response_model=ChapterResponse,
+    summary="Get one chapter by id",
+)
+async def get_chapter(
+    pid: str,
+    mid: str,
+    cid: str,
+    current_user: UserResponse = Depends(require_coach_or_user),
+):
+    """Return a single chapter, verifying it belongs to the stated module.
+
+    Returns 404 when the program, module, or chapter is absent, or when the
+    chapter is not a child of the module.
+    """
+    service = CoachingService()
+    return service.get_chapter(current_user, pid, mid, cid)
+
+
+@router.get(
+    "/{pid}/modules/{mid}/chapters/{cid}/exercises",
+    response_model=list[ExerciseResponse],
+    summary="List a chapter's exercises",
+)
+async def list_exercises(
+    pid: str,
+    mid: str,
+    cid: str,
+    current_user: UserResponse = Depends(require_coach_or_user),
+):
+    """List every exercise in a chapter, ordered by position then creation time.
+
+    Returns 404 when the program, module, or chapter is absent (or the chapter
+    is not a child of the module) and 403 when the requester has no access.
+    """
+    service = CoachingService()
+    return service.list_exercises(current_user, pid, mid, cid)
+
+
+@router.get(
+    "/{pid}/modules/{mid}/chapters/{cid}/exercises/{eid}",
+    response_model=ExerciseResponse,
+    summary="Get one exercise by id",
+)
+async def get_exercise(
+    pid: str,
+    mid: str,
+    cid: str,
+    eid: str,
+    current_user: UserResponse = Depends(require_coach_or_user),
+):
+    """Return a single exercise, verifying its full module/chapter parent chain.
+
+    Returns 404 when any node in the chain is absent or mis-parented.
+    """
+    service = CoachingService()
+    return service.get_exercise(current_user, pid, mid, cid, eid)

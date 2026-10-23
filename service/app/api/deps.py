@@ -98,3 +98,23 @@ def require_user(
     15.5, 15.6).
     """
     return _require_role(user, Role.user)
+
+def require_coach_or_user(
+    user: UserResponse = Depends(get_current_user),
+) -> UserResponse:
+    """
+    Authorize an action open to either known role.
+
+    Depends on `get_current_user`, so a missing/invalid/expired token yields 401
+    first. Raises 403 only when the account's role is absent or not one of the
+    recognized roles ({coach, user}); both `coach` and `user` are accepted. The
+    caller (service layer) is responsible for any per-resource authorization,
+    e.g. owner-or-enrolled access to a program's content (Requirement 15.6).
+    """
+    role = user.role
+    if role is None or role not in (Role.coach, Role.user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account role is missing or unrecognized; this action is not permitted",
+        )
+    return user
