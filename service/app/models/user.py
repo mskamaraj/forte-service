@@ -1,6 +1,14 @@
 from datetime import datetime
+from enum import Enum
 from pydantic import BaseModel, EmailStr, Field, field_validator
 import re
+
+
+# ── Role ──────────────────────────────────────────────────────────────────────
+
+class Role(str, Enum):
+    coach = "coach"
+    user = "user"
 
 
 # ── Request ───────────────────────────────────────────────────────────────────
@@ -10,6 +18,7 @@ class RegisterRequest(BaseModel):
     password: str = Field(..., min_length=8, max_length=128)
     first_name: str = Field(..., min_length=1, max_length=50)
     last_name: str = Field(..., min_length=1, max_length=50)
+    role: Role = Role.user
 
     @field_validator("password")
     @classmethod
@@ -41,6 +50,7 @@ class UserRecord(BaseModel):
     password_hash: str
     first_name: str
     last_name: str
+    role: Role = Role.user
     is_active: bool = True
     is_verified: bool = False
     created_at: str
@@ -55,6 +65,7 @@ class UserResponse(BaseModel):
     email: str
     first_name: str
     last_name: str
+    role: Role = Role.user
     is_active: bool
     is_verified: bool
     created_at: str

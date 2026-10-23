@@ -5,7 +5,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.security import decode_access_token
-from app.models.user import UserResponse
+from app.models.user import Role, UserResponse
 from app.repositories.user_repository import UserRepository
 from app.services.auth_service import _to_user_response
 
@@ -42,3 +42,59 @@ def get_current_user(
         raise invalid
 
     return _to_user_response(record)
+
+
+def _require_role(user: UserResponse, required: Role) -> UserResponse:
+    """
+    Authorize `user` for an action restricted to `required`.
+
+    Raises 403 when the resolved role is absent, not one of the known roles
+    ({coach, user}), or does not match the required role. The error body names
+    the account's role so the caller can see why the request was refused.
+    """
+    role = user.role
+
+    # Role absent or not a recognised value → 403 (Requirement 15.6).
+    if role is None or role not in (Role.coach, Role.user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account role is missing or unrecognized; this action is not permitted",
+        )
+
+    # Valid role but not the one this action requires → 403 (Requirements 15.2, 15.3, 15.5).
+    if role != required:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"This action requires the '{required.value}' role, "
+                f"but your account's role is '{role.value}'"
+            ),
+        )
+
+    return user
+
+
+def require_coach(
+    user: UserResponse = Depends(get_current_user),
+) -> UserResponse:
+    """
+    Authorize a coach-only action.
+
+    Depends on `get_current_user`, so a missing/invalid/expired token yields 401
+    first. Raises 403 when the account's role is not `coach` (Requirements 15.2,
+    15.5, 15.6).
+    """
+    return _require_role(user, Role.coach)
+
+
+def require_user(
+    user: UserResponse = Depends(get_current_user),
+) -> UserResponse:
+    """
+    Authorize a participant (user-only) action.
+
+    Depends on `get_current_user`, so a missing/invalid/expired token yields 401
+    first. Raises 403 when the account's role is not `user` (Requirements 15.3,
+    15.5, 15.6).
+    """
+    return _require_role(user, Role.user)

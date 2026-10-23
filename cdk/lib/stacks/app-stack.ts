@@ -115,6 +115,10 @@ export class AppStack extends cdk.Stack {
       environment: {
         ENVIRONMENT: environment,
         DYNAMODB_USERS_TABLE: databaseStack.usersTable.table.tableName,
+        DYNAMODB_PROGRAMS_TABLE: databaseStack.programsTable.table.tableName,
+        DYNAMODB_CONTENT_TABLE: databaseStack.contentTable.table.tableName,
+        DYNAMODB_ENROLLMENTS_TABLE: databaseStack.enrollmentsTable.table.tableName,
+        DYNAMODB_COMPLETION_TABLE: databaseStack.completionTable.table.tableName,
         JWT_SECRET_PARAM_NAME: jwtSecretParamName,
       },
 
@@ -123,8 +127,12 @@ export class AppStack extends cdk.Stack {
       logGroup,
     });
 
-    // ── IAM — grant the function read/write on the users table ────────────
+    // ── IAM — grant the function read/write on the DynamoDB tables ────────
     databaseStack.usersTable.table.grantReadWriteData(fn);
+    databaseStack.programsTable.table.grantReadWriteData(fn);
+    databaseStack.contentTable.table.grantReadWriteData(fn);
+    databaseStack.enrollmentsTable.table.grantReadWriteData(fn);
+    databaseStack.completionTable.table.grantReadWriteData(fn);
 
     // ── IAM — grant the function read access to the JWT secret parameter ──
     jwtSecretParam.grantRead(fn);

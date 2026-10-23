@@ -7,3 +7,8 @@ boto3==1.35.36
 bcrypt==4.2.0
 email-validator==2.2.0
 PyJWT==2.9.0
+
+# Test dependencies
+pytest==9.1.1
+hypothesis==6.170.1
+moto[dynamodb]==5.2.4
