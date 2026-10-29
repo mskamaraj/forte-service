@@ -297,6 +297,7 @@ class CoachingService:
             node_id=str(uuid.uuid4()),
             parent_id=None,
             title=payload.title,
+            description=payload.description,
             position=payload.position,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -988,6 +989,7 @@ def _build_tree_with_completion(
             ModuleNode(
                 module_id=module.node_id,
                 title=module.title,
+                description=module.description or "",
                 position=module.position,
                 created_at=module.created_at,
                 chapters=chapter_nodes,
@@ -1060,6 +1062,7 @@ def _to_module_response(record: ContentNodeRecord) -> ModuleResponse:
     return ModuleResponse(
         module_id=record.node_id,
         title=record.title,
+        description=record.description or "",
         position=record.position,
         created_at=record.created_at,
     )

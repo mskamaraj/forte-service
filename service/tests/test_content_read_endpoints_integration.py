@@ -365,3 +365,46 @@ def test_delete_chapter_wrong_module_is_404(seeded):
     with pytest.raises(HTTPException) as exc:
         seeded.delete_chapter(COACH_ID, PROGRAM_ID, "m2", "c1")
     assert exc.value.status_code == 404
+
+
+# ── Module description field ──────────────────────────────────────────────────
+
+
+def test_create_module_persists_description(seeded):
+    from app.models.content import ModuleCreateRequest
+
+    created = seeded.create_module(
+        COACH_ID, PROGRAM_ID, ModuleCreateRequest(title="M3", description="Intro week", position=3)
+    )
+    assert created.description == "Intro week"
+
+    # And it round-trips on read.
+    fetched = seeded.get_module(_coach(), PROGRAM_ID, created.module_id)
+    assert fetched.description == "Intro week"
+
+
+def test_create_module_description_defaults_empty(seeded):
+    from app.models.content import ModuleCreateRequest
+
+    created = seeded.create_module(
+        COACH_ID, PROGRAM_ID, ModuleCreateRequest(title="M4", position=4)
+    )
+    assert created.description == ""
+
+
+def test_update_module_description(seeded):
+    from app.models.content import ModuleUpdateRequest
+
+    updated = seeded.update_module(
+        COACH_ID, PROGRAM_ID, "m1", ModuleUpdateRequest(description="Updated summary")
+    )
+    assert updated.description == "Updated summary"
+    # Title is untouched by a description-only update.
+    assert updated.title == "module-m1"
+
+
+def test_existing_module_without_description_reads_as_empty(seeded):
+    # m1 was seeded via a raw ContentNodeRecord with no description, mirroring
+    # pre-existing data. It must read back as "" rather than failing.
+    fetched = seeded.get_module(_coach(), PROGRAM_ID, "m1")
+    assert fetched.description == ""

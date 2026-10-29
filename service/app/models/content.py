@@ -28,6 +28,7 @@ def _validate_title(v: str) -> str:
 
 class ModuleCreateRequest(BaseModel):
     title: str
+    description: str = Field("", max_length=5000)  # optional free-text summary
     position: int = Field(..., ge=1)  # integer >= 1 (Requirement 5.4)
 
     @field_validator("title")
@@ -36,8 +37,15 @@ class ModuleCreateRequest(BaseModel):
         return _validate_title(v)
 
 
-class ChapterCreateRequest(ModuleCreateRequest):
-    """Same constraints as module create (Requirement 6)."""
+class ChapterCreateRequest(BaseModel):
+    """Same constraints as module create, but without a description (Requirement 6)."""
+    title: str
+    position: int = Field(..., ge=1)
+
+    @field_validator("title")
+    @classmethod
+    def title_not_blank(cls, v: str) -> str:
+        return _validate_title(v)
 
 
 class ExerciseCreateRequest(BaseModel):
@@ -55,6 +63,7 @@ class ExerciseCreateRequest(BaseModel):
 
 class ModuleUpdateRequest(BaseModel):
     title: str | None = None
+    description: str | None = Field(None, max_length=5000)
     position: int | None = Field(None, ge=1)
 
     @field_validator("title")
@@ -64,13 +73,26 @@ class ModuleUpdateRequest(BaseModel):
 
     @model_validator(mode="after")
     def at_least_one(self) -> "ModuleUpdateRequest":
-        if self.title is None and self.position is None:
+        if self.title is None and self.description is None and self.position is None:
             raise ValueError("No updatable field provided")  # Requirement 8.8
         return self
 
 
-class ChapterUpdateRequest(ModuleUpdateRequest):
-    """Same as module update (Requirement 8.2)."""
+class ChapterUpdateRequest(BaseModel):
+    """Same as module update, but without a description (Requirement 8.2)."""
+    title: str | None = None
+    position: int | None = Field(None, ge=1)
+
+    @field_validator("title")
+    @classmethod
+    def title_rule(cls, v: str | None) -> str | None:
+        return _validate_title(v) if v is not None else v
+
+    @model_validator(mode="after")
+    def at_least_one(self) -> "ChapterUpdateRequest":
+        if self.title is None and self.position is None:
+            raise ValueError("No updatable field provided")  # Requirement 8.8
+        return self
 
 
 class ExerciseUpdateRequest(BaseModel):
@@ -98,6 +120,7 @@ class ContentNodeRecord(BaseModel):
     node_id: str                    # uuid4
     parent_id: str | None           # module -> None; chapter -> module_id; exercise -> chapter_id
     title: str
+    description: str | None = None   # modules only
     position: int
     prompt: str | None = None       # exercises only
     created_at: str
@@ -108,6 +131,7 @@ class ContentNodeRecord(BaseModel):
 class ModuleResponse(BaseModel):
     module_id: str
     title: str
+    description: str
     position: int
     created_at: str
 
