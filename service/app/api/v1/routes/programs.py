@@ -382,3 +382,72 @@ async def get_exercise(
     """
     service = CoachingService()
     return service.get_exercise(current_user, pid, mid, cid, eid)
+
+
+# ── Content delete (coach-only, no cascade) ───────────────────────────────────
+# DELETE endpoints for the content hierarchy. Coach-only and owner-gated. A
+# non-empty module/chapter is refused with 409 (children must be removed first);
+# an exercise is a leaf and always deletable. Success returns 204 No Content.
+
+
+@router.delete(
+    "/{pid}/modules/{mid}",
+    status_code=204,
+    summary="Delete a module (must be empty)",
+)
+async def delete_module(
+    pid: str,
+    mid: str,
+    current_user: UserResponse = Depends(require_coach),
+):
+    """Delete an owned program's module.
+
+    Returns 404 when the program or module is absent, 403 when the coach is not
+    the owner, and 409 when the module still has chapters. Requires the
+    ``coach`` role.
+    """
+    service = CoachingService()
+    service.delete_module(current_user.user_id, pid, mid)
+
+
+@router.delete(
+    "/{pid}/modules/{mid}/chapters/{cid}",
+    status_code=204,
+    summary="Delete a chapter (must be empty)",
+)
+async def delete_chapter(
+    pid: str,
+    mid: str,
+    cid: str,
+    current_user: UserResponse = Depends(require_coach),
+):
+    """Delete an owned program's chapter.
+
+    Returns 404 when the program, module, or chapter is absent (or the chapter
+    is not a child of the module), 403 when the coach is not the owner, and 409
+    when the chapter still has exercises. Requires the ``coach`` role.
+    """
+    service = CoachingService()
+    service.delete_chapter(current_user.user_id, pid, mid, cid)
+
+
+@router.delete(
+    "/{pid}/modules/{mid}/chapters/{cid}/exercises/{eid}",
+    status_code=204,
+    summary="Delete an exercise",
+)
+async def delete_exercise(
+    pid: str,
+    mid: str,
+    cid: str,
+    eid: str,
+    current_user: UserResponse = Depends(require_coach),
+):
+    """Delete an owned program's exercise.
+
+    Returns 404 when any node in the module/chapter/exercise chain is absent or
+    mis-parented, and 403 when the coach is not the owner. Requires the
+    ``coach`` role.
+    """
+    service = CoachingService()
+    service.delete_exercise(current_user.user_id, pid, mid, cid, eid)

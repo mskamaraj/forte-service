@@ -72,6 +72,26 @@ class ContentRepository:
             raise
         return record
 
+    def delete_node(self, program_id: str, node_type_value: str, node_id: str) -> None:
+        """Delete a single content node by its composite key.
+
+        ``node_sk`` is ``{node_type}#{node_id}``. Uses a condition expression so
+        deleting a node that does not exist fails rather than silently
+        succeeding, letting the service distinguish a missing node (404). Only
+        the single node is removed; the service is responsible for refusing a
+        delete when the node still has children (no cascade).
+        """
+        node_sk = f"{node_type_value}#{node_id}"
+        try:
+            self._table.delete_item(
+                Key={"program_id": program_id, "node_sk": node_sk},
+                ConditionExpression="attribute_exists(node_sk)",
+            )
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                raise ValueError(f"Content node {node_sk} does not exist")
+            raise
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     @staticmethod

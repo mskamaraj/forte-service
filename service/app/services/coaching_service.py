@@ -472,6 +472,86 @@ class CoachingService:
         saved = self._content.update_node(updated)
         return _to_exercise_response(saved)
 
+    # ── Content delete (coach-only, no cascade) ──────────────────────────────
+
+    def delete_module(
+        self, coach_id: str, program_id: str, module_id: str
+    ) -> None:
+        """Delete a Module from an owned Program.
+
+        Applies the authoring rejection precedence (ancestry 404 → ownership
+        403), then refuses a non-empty Module:
+
+        1. ``_require_owned_program`` reports a missing Program as 404 before the
+           ownership 403.
+        2. ``_require_node`` reports a missing Module as 404.
+        3. 409 when the Module still has one or more Chapters — deletion does not
+           cascade, so children must be removed first.
+
+        On success the single Module node is removed.
+        """
+        self._require_owned_program(coach_id, program_id)
+        self._require_node(program_id, NodeType.module, module_id)
+
+        if self._has_children(program_id, NodeType.chapter, module_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Module is not empty; delete its chapters first",
+            )
+
+        self._content.delete_node(program_id, NodeType.module.value, module_id)
+
+    def delete_chapter(
+        self, coach_id: str, program_id: str, module_id: str, chapter_id: str
+    ) -> None:
+        """Delete a Chapter from an owned Program.
+
+        Applies ancestry 404 → ownership 403, verifies the Chapter belongs to
+        the stated Module, then refuses a non-empty Chapter:
+
+        1. ``_require_owned_program`` / ``_require_node`` report any missing
+           ancestor (Program, Module) or the Chapter itself as 404.
+        2. ``_require_child_node`` reports a Chapter not parented by the stated
+           Module as 404.
+        3. 409 when the Chapter still has one or more Exercises.
+
+        On success the single Chapter node is removed.
+        """
+        self._require_owned_program(coach_id, program_id)
+        self._require_node(program_id, NodeType.module, module_id)
+        self._require_child_node(program_id, NodeType.chapter, chapter_id, module_id)
+
+        if self._has_children(program_id, NodeType.exercise, chapter_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Chapter is not empty; delete its exercises first",
+            )
+
+        self._content.delete_node(program_id, NodeType.chapter.value, chapter_id)
+
+    def delete_exercise(
+        self,
+        coach_id: str,
+        program_id: str,
+        module_id: str,
+        chapter_id: str,
+        exercise_id: str,
+    ) -> None:
+        """Delete an Exercise from an owned Program.
+
+        Applies ancestry 404 → ownership 403 and verifies the full parent chain
+        (Module → Chapter → Exercise). An Exercise is a leaf, so there is no
+        child check; on success the single Exercise node is removed.
+        """
+        self._require_owned_program(coach_id, program_id)
+        self._require_node(program_id, NodeType.module, module_id)
+        self._require_child_node(program_id, NodeType.chapter, chapter_id, module_id)
+        self._require_child_node(
+            program_id, NodeType.exercise, exercise_id, chapter_id
+        )
+
+        self._content.delete_node(program_id, NodeType.exercise.value, exercise_id)
+
     # ── Content view (enrolled user) ─────────────────────────────────────────
 
     def get_content_tree(self, user_id: str, program_id: str) -> ContentTreeResponse:
@@ -722,6 +802,20 @@ class CoachingService:
         ]
         nodes.sort(key=lambda n: (n.position, n.created_at))
         return nodes
+
+    def _has_children(
+        self, program_id: str, child_type: NodeType, parent_id: str
+    ) -> bool:
+        """Return whether any node of ``child_type`` is parented by ``parent_id``.
+
+        Reuses the single ``list_for_program`` query. Used by the delete flow to
+        refuse removing a non-empty Module (has chapters) or Chapter (has
+        exercises) — deletion does not cascade.
+        """
+        return any(
+            n.node_type == child_type and n.parent_id == parent_id
+            for n in self._content.list_for_program(program_id)
+        )
 
     def _require_child_node(
         self,

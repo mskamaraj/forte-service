@@ -307,3 +307,61 @@ def test_exercise_under_wrong_chapter_is_404(seeded):
     with pytest.raises(HTTPException) as exc:
         seeded.get_exercise(_coach(), PROGRAM_ID, "m1", "no-such-chapter", "e1")
     assert exc.value.status_code == 404
+
+
+# ── Delete (coach-only, no cascade) ───────────────────────────────────────────
+
+
+def test_delete_exercise_removes_leaf(seeded):
+    # e1 is a leaf under c1; deleting it leaves only e2.
+    seeded.delete_exercise(COACH_ID, PROGRAM_ID, "m1", "c1", "e1")
+    remaining = seeded.list_exercises(_coach(), PROGRAM_ID, "m1", "c1")
+    assert [e.exercise_id for e in remaining] == ["e2"]
+
+
+def test_delete_chapter_with_exercises_is_409(seeded):
+    # c1 still has exercises e1, e2.
+    with pytest.raises(HTTPException) as exc:
+        seeded.delete_chapter(COACH_ID, PROGRAM_ID, "m1", "c1")
+    assert exc.value.status_code == 409
+    # Chapter is untouched.
+    assert [c.chapter_id for c in seeded.list_chapters(_coach(), PROGRAM_ID, "m1")] == ["c1"]
+
+
+def test_delete_chapter_after_emptying_succeeds(seeded):
+    seeded.delete_exercise(COACH_ID, PROGRAM_ID, "m1", "c1", "e1")
+    seeded.delete_exercise(COACH_ID, PROGRAM_ID, "m1", "c1", "e2")
+    seeded.delete_chapter(COACH_ID, PROGRAM_ID, "m1", "c1")
+    assert seeded.list_chapters(_coach(), PROGRAM_ID, "m1") == []
+
+
+def test_delete_module_with_chapters_is_409(seeded):
+    # m1 still has chapter c1.
+    with pytest.raises(HTTPException) as exc:
+        seeded.delete_module(COACH_ID, PROGRAM_ID, "m1")
+    assert exc.value.status_code == 409
+
+
+def test_delete_empty_module_succeeds(seeded):
+    # m2 has no chapters.
+    seeded.delete_module(COACH_ID, PROGRAM_ID, "m2")
+    assert [m.module_id for m in seeded.list_modules(_coach(), PROGRAM_ID)] == ["m1"]
+
+
+def test_delete_module_missing_is_404(seeded):
+    with pytest.raises(HTTPException) as exc:
+        seeded.delete_module(COACH_ID, PROGRAM_ID, "no-such-module")
+    assert exc.value.status_code == 404
+
+
+def test_delete_exercise_non_owner_is_403(seeded):
+    with pytest.raises(HTTPException) as exc:
+        seeded.delete_exercise(OTHER_COACH_ID, PROGRAM_ID, "m1", "c1", "e1")
+    assert exc.value.status_code == 403
+
+
+def test_delete_chapter_wrong_module_is_404(seeded):
+    # c1 belongs to m1, not m2 — strict ancestry rejects the delete.
+    with pytest.raises(HTTPException) as exc:
+        seeded.delete_chapter(COACH_ID, PROGRAM_ID, "m2", "c1")
+    assert exc.value.status_code == 404
